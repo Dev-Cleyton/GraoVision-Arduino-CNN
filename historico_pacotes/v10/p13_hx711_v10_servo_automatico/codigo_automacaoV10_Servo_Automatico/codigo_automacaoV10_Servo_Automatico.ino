@@ -1,0 +1,575 @@
+/*
+ * TCC ANALISE DE GRAOS - V10: SERVO AUTOMATICO DURANTE A PESAGEM
+ * Derivado da V10 com TESTE:PESO e diagnostico SERVO:ON/OFF.
+ * O prato permaneceu parado no teste com o servo sem PWM.
+ * ATENCAO: confirmar tambem apoio mecanico na posicao de PESAGEM2.
+ * Nao executar aquecimento no primeiro teste integrado.
+ * Fator HX711 ainda PROVISORIO: massa de referencia nominal 250 g.
+ */
+
+#include <EEPROM.h>
+#include <Servo.h>
+#include <HX711.h>
+#include <math.h>
+
+// === Definições de pinos ===
+#define SCK A0
+#define DT A1
+#define dirPin 2
+#define stepPin 3
+#define ReleTemp 6
+#define servoPin 9
+#define heaterPin 11
+
+// === Constantes ===
+const int pinNTC = A2;
+const float VCC = 5.0;
+const float R_FIXED = 10000.0;
+const float BETA = 3950.0;
+const float T0 = 298.15;
+const float R0 = 10000.0;
+const unsigned long intervalo = 30000UL;
+
+// === Objetos ===
+Servo meuServo;
+HX711 escala;
+
+// === Variáveis globais ===
+long currentPositionSteps = 0;
+// Fator provisório obtido nos três ciclos de calibração do HX711 novo.
+// Não recuperar o fator antigo da EEPROM.
+const float FATOR_CONTAGENS_POR_G = -1129.6755f;
+const byte PESO_AMOSTRAS = 12;
+const byte PESO_MAX_JANELAS = 8;  // Mais observacoes antes de desistir.
+const unsigned long HX_TIMEOUT_MS = 2500UL;
+const float LIMITE_AMPLITUDE_G = 0.30f; // Provisorio: comparar com testes reais.
+const float LIMITE_DERIVA_JANELAS_G = 0.12f; // Medias de janelas consecutivas.
+const unsigned long REPOUSO_ANTES_PESO_MS = 4000UL;
+const byte LEITURAS_DESCARTE = 4;
+const unsigned long PAUSA_PESO_MS = 100UL;
+float pressaoVaporReal = 10.0;
+
+const int eepromPosStepper = 0;
+// Endereço de fator antigo removido: não sobrescrever a calibração nova.
+
+long stepsPerCycle = 14000;
+int tempoServo = 3000;
+bool valido = true;
+bool taraRealizada = false;
+// O servo e religado somente para movimentos e desligado para pesagens.
+// O ultimo angulo comandado evita saltos por reanexo com angulo incorreto.
+// detach() desliga APENAS o sinal de controle; nao corta a alimentacao.
+int ultimoAnguloServo = 90;
+const unsigned long ASSENTAMENTO_TARA_MS = 2000UL;
+const unsigned long SERVO_REANEXO_MS = 300UL;
+
+// === Máquina de estados ===
+enum State {
+  IDLE,
+  SERVO_DIREITA,
+  CAMERA,
+  PESAGEM1,
+  SERVO_ESQUERDA,
+  ATUADOR_SOBE,
+  LEITURA_AMBIENTE,
+  PESAGEM2,
+  ATUADOR_DESCE,
+  FIM,
+  ERRO
+};
+
+State estado = IDLE;
+
+// === Setup ===
+void setup() {
+  Serial.begin(9600);
+  Serial.setTimeout(1000);
+
+  pinMode(ReleTemp, OUTPUT);
+  pinMode(dirPin, OUTPUT);
+  pinMode(stepPin, OUTPUT);
+  pinMode(heaterPin, OUTPUT);
+
+  digitalWrite(ReleTemp, LOW);
+  digitalWrite(heaterPin, LOW);
+
+  meuServo.attach(servoPin);
+  meuServo.write(90);
+
+  escala.begin(DT, SCK);
+
+  escala.set_scale(FATOR_CONTAGENS_POR_G);
+  // A tara é comandada pelo operador via TARA com o prato metálico vazio.
+  // Não executar tara automática ao ligar: a carga pode estar presente.
+
+  EEPROM.get(eepromPosStepper, currentPositionSteps);
+
+  Serial.println(F("READY: Awaiting START command"));
+}
+
+// === Loop principal ===
+void loop() {
+  gerenciarSerial();
+
+  switch (estado) {
+
+    case IDLE:
+      break;
+
+    case SERVO_ESQUERDA:
+      moverLento(meuServo, 90, 0, 10);
+      Serial.println("SERVO:POSICAO_CAMERA");
+      delay(5000);//Mudei de 1000 para 5000
+      reportarValidation(0, "LOAD", CAMERA);
+      return;
+
+    case CAMERA:
+      Serial.println("CMD:ACTIVATE_CAMERA");
+
+      valido = aguardarResposta("CAM:SUCESSO", 50000UL);
+
+      if (valido) {
+        moverLento(meuServo, 0, 90, 10);
+        reportarValidation(0, "GRAO APROVADO", PESAGEM1);
+        return;
+      }
+
+      // Se não houver aprovação, a amostra não segue
+      // para a etapa de pesagem e aquecimento.
+      moverLento(meuServo, 0, 90, 10);
+      reportarValidation(0, "GRAO REPROVADO", IDLE);
+      return;
+
+    case PESAGEM1:
+      Serial.println("PESAGEM1");
+      {
+        float peso;
+        if (!medirPesoEstavel(peso)) {
+          Serial.println(F("PESO:ERRO"));
+          reportarErro(10);
+          return;
+        }
+        enviarPeso("PESO", peso);
+        estado = SERVO_DIREITA;
+      }
+      return;
+
+    case SERVO_DIREITA:
+      delay(tempoServo);
+      moverLento(meuServo, 90, 180, 10);
+      delay(500);
+      estado = ATUADOR_SOBE;
+      return;
+
+    case ATUADOR_SOBE:
+      if (moverAtuador(true, stepsPerCycle)) {
+        estado = LEITURA_AMBIENTE;
+        return;
+      } else {
+        reportarErro(4);
+      }
+      break;
+
+    case LEITURA_AMBIENTE:
+      digitalWrite(ReleTemp, HIGH);
+
+      // Envia os dados em mensagens individuais.
+      enviarAmbiente();
+
+      // Mantém o intervalo original de 30 segundos.
+      delay(intervalo);
+
+      estado = PESAGEM2;
+      return;
+
+    case PESAGEM2:
+      {
+        float peso;
+        if (!medirPesoEstavel(peso)) {
+          Serial.println(F("PESO2:ERRO"));
+          reportarErro(11);
+          return;
+        }
+        enviarPeso("PESO2", peso);
+      }
+
+      // Nova leitura ambiental após o intervalo.
+      enviarAmbiente();
+
+      digitalWrite(ReleTemp, LOW);
+
+      estado = ATUADOR_DESCE;
+      return;
+
+    case ATUADOR_DESCE:
+      if (!moverAtuador(false, stepsPerCycle)) {
+        reportarErro(4);
+        return;
+      }
+      moverLento(meuServo, 180, 90, 10);
+      estado = FIM;
+      return;
+
+    case FIM:
+      desativarSinalServo();
+      Serial.println("FIM:1");
+      estado = IDLE;
+      return;
+
+    case ERRO:
+      digitalWrite(ReleTemp, LOW);
+      digitalWrite(heaterPin, LOW);
+      desativarSinalServo();
+      estado = IDLE;
+      return;
+  }
+}
+
+// === Recepção de comandos do Python ===
+void gerenciarSerial() {
+  if (Serial.available()) {
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
+
+    if (cmd == "TARA" && estado == IDLE) {
+      // A tara deve usar as mesmas condicoes eletricas da pesagem:
+      // prato vazio e servo sem pulsos de controle.
+      taraRealizada = false;
+      desativarSinalServo();
+      Serial.println(F("HX711:TARA:AGUARDANDO_ACOMODACAO"));
+      delay(ASSENTAMENTO_TARA_MS);
+      if (realizarTaraSegura()) {
+        taraRealizada = true;
+        Serial.println(F("TARA:OK"));
+      } else {
+        Serial.println(F("TARA:ERRO"));
+      }
+    }
+
+    if (cmd == "START" && estado == IDLE) {
+      if (taraRealizada) {
+        // O servo permanece sem pulsos ate o primeiro movimento.
+        // moverLento() faz o attach automaticamente quando necessario.
+        taraRealizada = false; // Exige nova tara para cada ciclo.
+        estado = SERVO_ESQUERDA;
+      } else {
+        Serial.println("ERRO:TARA_NAO_REALIZADA");
+      }
+    }
+
+    // DIAGNOSTICO SERVO/HX711: apenas em IDLE, sem movimentos.
+    // ATENCAO: SERVO:OFF remove apenas o sinal PWM.
+    // Use somente se a bandeja se mantiver mecanicamente apoiada
+    // e nao houver risco de soltar carga ou derramar graos.
+    if (cmd == "SERVO:OFF" && estado == IDLE) {
+      desativarSinalServo();
+      Serial.println(F("SERVO:AVISO:ALIMENTACAO_CONTINUA_LIGADA"));
+      return;
+    }
+
+    if (cmd == "SERVO:ON" && estado == IDLE) {
+      // Reativa na ULTIMA posicao solicitada, sem forcar 90 graus.
+      ativarSinalServo();
+      Serial.print(F("SERVO:SINAL_ATIVADO_POSICAO_"));
+      Serial.println(ultimoAnguloServo);
+      return;
+    }
+
+    if (cmd == "SERVO:STATUS" && estado == IDLE) {
+      Serial.println(meuServo.attached() ? F("SERVO:STATUS:ON") : F("SERVO:STATUS:OFF"));
+      return;
+    }
+
+    // Diagnostico sem deslocar servo ou atuador: somente em IDLE.
+    // Envie TARA primeiro (prato vazio), depois coloque a amostra e
+    // envie TESTE:PESO para medir com os acionamentos parados.
+    if (cmd == "TESTE:PESO" && estado == IDLE) {
+      if (!taraRealizada) {
+        Serial.println(F("PESO_TESTE:ERRO:TARA_NAO_REALIZADA"));
+      } else {
+        float valorTeste;
+        if (medirPesoEstavel(valorTeste)) {
+          enviarPeso("PESO_TESTE", valorTeste);
+        } else {
+          Serial.println(F("PESO_TESTE:ERRO:INSTAVEL_OU_SEM_SINAL"));
+        }
+      }
+    }
+
+    if (cmd.startsWith("TIME_SERVO:")) {
+      int segundos = cmd.substring(11).toInt();
+
+      if (segundos > 0) {
+        tempoServo = segundos * 1000L;
+      }
+    }
+  }
+}
+
+// === Aguarda resposta da câmera ===
+bool aguardarResposta(String esperado, unsigned long timeoutMs) {
+  unsigned long inicio = millis();
+
+  while (millis() - inicio < timeoutMs) {
+    if (Serial.available()) {
+      String resposta = Serial.readStringUntil('\n');
+      resposta.trim();
+
+      if (resposta.equalsIgnoreCase(esperado) ||
+          resposta.equalsIgnoreCase("CAM:OK")) {
+        return true;
+      }
+
+      if (resposta.equalsIgnoreCase("CAM:RUIM")) {
+        return false;
+      }
+
+      // Ignora mensagens que não sejam respostas válidas
+      // da câmera, sem confundi-las com uma reprovação.
+    }
+  }
+
+  return false;
+}
+
+// === Envio do peso ===
+void enviarPeso(String etiqueta, float valor) {
+  Serial.print(etiqueta);
+  Serial.print(":");
+  Serial.println(valor, 2);
+}
+
+// === Envio dos dados ambientais ===
+void enviarAmbiente() {
+  float tempC = lerTemperaturaNTC(pinNTC);
+  float umidade = estimarUmidade(tempC, pressaoVaporReal);
+
+  Serial.print("TEMPERATURA:");
+  if (isnan(tempC)) {
+    Serial.println("ERRO");
+  } else {
+    Serial.println(tempC, 2);
+  }
+
+  Serial.print("UMIDADE:");
+  if (isnan(umidade)) {
+    Serial.println("ERRO");
+  } else {
+    Serial.println(umidade, 2);
+  }
+
+  delay(1000);
+}
+
+// === Leitura do NTC ===
+float lerTemperaturaNTC(int pino) {
+  int adc = analogRead(pino);
+
+  // Evita divisão por zero e valores inválidos.
+  if (adc <= 0 || adc >= 1023) {
+    return NAN;
+  }
+
+  float Vout = adc * VCC / 1023.0;
+  float Rntc = (R_FIXED * Vout) / (VCC - Vout);
+
+  if (Rntc <= 0) {
+    return NAN;
+  }
+
+  float tempK =
+      1.0 / ((1.0 / T0) + (1.0 / BETA) * log(Rntc / R0));
+
+  return tempK - 273.15;
+}
+
+// === Estimativa de umidade ===
+float estimarUmidade(float tempC, float pressaoVapor) {
+  if (isnan(tempC)) {
+    return NAN;
+  }
+
+  float denominador = 237.3 + tempC;
+
+  if (denominador == 0) {
+    return NAN;
+  }
+
+  float es = 6.1078 * pow(10, (7.5 * tempC) / denominador);
+
+  if (es <= 0) {
+    return NAN;
+  }
+
+  float ur = (pressaoVapor / es) * 100.0;
+
+  return constrain(ur, 0, 100);
+}
+
+// === Registro de erro ===
+void reportarErro(int codigo) {
+  desativarSinalServo();
+  Serial.print("ERRO:");
+  Serial.println(codigo);
+
+  digitalWrite(ReleTemp, LOW);
+  digitalWrite(heaterPin, LOW);
+
+  estado = ERRO;
+}
+
+// === Transição de estado ===
+void reportarValidation(int codigo, String validation, int estadoValidado) {
+  estado = (State)estadoValidado;
+}
+
+// === Tara segura: o prato metálico deve estar vazio ===
+// O operador confirma o prato vazio antes de enviar TARA.
+bool realizarTaraSegura() {
+  const byte N = 20;
+  int64_t soma = 0;
+  for (byte i = 0; i < N; i++) {
+    if (!escala.wait_ready_timeout(HX_TIMEOUT_MS)) return false;
+    soma += escala.read();
+  }
+  escala.set_offset((long)(soma / N));
+  return true;
+}
+
+// === Medicao em janelas consecutivas com verificacao de estabilidade ===
+// Exige DUAS janelas consecutivas estaveis e medias proximas.
+// A amplitude representa ruido instantaneo; a diferenca entre medias
+// detecta deslocamento lento da carga durante o repouso.
+// O limite ainda e provisório e NAO substitui correcao mecanica.
+bool medirPesoEstavel(float &peso) {
+  // Resultado do teste fisico: sem PWM, amplitude caiu de cerca
+  // de 0,44 g para 0,08 g. A bandeja permaneceu apoiada.
+  // Usado igualmente para PESO, PESO2 e TESTE:PESO.
+  desativarSinalServo();
+  Serial.println(F("HX711:AGUARDANDO_REPOUSO"));
+  delay(REPOUSO_ANTES_PESO_MS);
+
+  // Descarta as primeiras leituras depois do reposicionamento.
+  for (byte i = 0; i < LEITURAS_DESCARTE; i++) {
+    if (!escala.wait_ready_timeout(HX_TIMEOUT_MS)) {
+      Serial.println(F("HX711:ERRO:TIMEOUT"));
+      return false;
+    }
+    escala.read();
+  }
+
+  bool existeJanelaAnteriorEstavel = false;
+  float mediaAnterior = 0.0f;
+
+  for (byte janela = 1; janela <= PESO_MAX_JANELAS; janela++) {
+    float soma = 0.0f;
+    float minimo = 0.0f;
+    float maximo = 0.0f;
+
+    for (byte i = 0; i < PESO_AMOSTRAS; i++) {
+      if (!escala.wait_ready_timeout(HX_TIMEOUT_MS)) {
+        Serial.println(F("HX711:ERRO:TIMEOUT"));
+        return false;
+      }
+
+      float leitura = escala.get_units(1);
+      if (isnan(leitura) || isinf(leitura)) {
+        Serial.println(F("HX711:ERRO:LEITURA_INVALIDA"));
+        return false;
+      }
+      if (i == 0 || leitura < minimo) minimo = leitura;
+      if (i == 0 || leitura > maximo) maximo = leitura;
+      soma += leitura;
+      delay(PAUSA_PESO_MS);
+    }
+
+    const float media = soma / PESO_AMOSTRAS;
+    const float amplitude = maximo - minimo;
+
+    Serial.print(F("HX711:JANELA:"));
+    Serial.print(janela);
+    Serial.print(F(":MEDIA:"));
+    Serial.print(media, 3);
+    Serial.print(F(":AMPLITUDE:"));
+    Serial.println(amplitude, 3);
+
+    if (amplitude <= LIMITE_AMPLITUDE_G) {
+      if (existeJanelaAnteriorEstavel &&
+          fabs(media - mediaAnterior) <= LIMITE_DERIVA_JANELAS_G) {
+        peso = (media + mediaAnterior) / 2.0f;
+        Serial.println(F("HX711:ESTAVEL"));
+        return true;
+      }
+      mediaAnterior = media;
+      existeJanelaAnteriorEstavel = true;
+    } else {
+      // Nao se pode comparar uma janela ruidosa com a seguinte.
+      existeJanelaAnteriorEstavel = false;
+    }
+
+    Serial.print(F("PESO:INSTAVEL:"));
+    Serial.println(amplitude, 3);
+  }
+
+  Serial.println(F("HX711:ERRO:SEM_ESTABILIDADE"));
+  return false;
+}
+
+// === Controle do atuador ===
+bool moverAtuador(bool subir, long passos) {
+  digitalWrite(dirPin, subir ? HIGH : LOW);
+
+  for (long i = 0; i < passos; i++) {
+    digitalWrite(stepPin, HIGH);
+    delayMicroseconds(300);
+    digitalWrite(stepPin, LOW);
+    delayMicroseconds(300);
+
+    currentPositionSteps += subir ? 1 : -1;
+  }
+
+  EEPROM.put(eepromPosStepper, currentPositionSteps);
+
+  Serial.print("POS_ATUADOR:");
+  Serial.println(currentPositionSteps);
+
+  return true;
+}
+
+// === Servo: comutar sinal PWM sem desligar a alimentacao ===
+void desativarSinalServo() {
+  if (meuServo.attached()) {
+    meuServo.detach();
+    Serial.println(F("SERVO:SINAL_DESATIVADO"));
+  }
+}
+
+void ativarSinalServo() {
+  if (!meuServo.attached()) {
+    // Servo.write() guarda o angulo antes de attach().
+    // Nao reiniciar em 90 graus se o ultimo angulo foi 180.
+    meuServo.write(ultimoAnguloServo);
+    meuServo.attach(servoPin);
+    delay(SERVO_REANEXO_MS);
+    Serial.println(F("SERVO:SINAL_REATIVADO_PARA_MOVIMENTO"));
+  }
+}
+
+// === Movimento lento do servo ===
+void moverLento(Servo &servo, int inicio, int fim, int tempoDelay) {
+  ativarSinalServo();
+  // A posicao inicial recebida acompanha a logica do firmware anterior.
+  if (inicio < fim) {
+    for (int pos = inicio; pos <= fim; pos++) {
+      servo.write(pos);
+      ultimoAnguloServo = pos;
+      delay(tempoDelay);
+    }
+  } else {
+    for (int pos = inicio; pos >= fim; pos--) {
+      servo.write(pos);
+      ultimoAnguloServo = pos;
+      delay(tempoDelay);
+    }
+  }
+}
