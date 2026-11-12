@@ -1,0 +1,40 @@
+# Credenciais
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*credentials*
+*secrets*
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+# IDE/build
+.vscode/
+.idea/
+build/
+dist/
+*.hex
+*.elf
+*.o
+*.class
+# Dados locais e privados
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.log
+imagens_capturadas/
+clientes_privados/
+relatorios_privados/
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
