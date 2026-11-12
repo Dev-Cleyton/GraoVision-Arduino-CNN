@@ -1,0 +1,603 @@
+/*
+ * TCC GRAOS - FIRMWARE CONSOLIDADO V10.1C (PROTOTIPO SUPERVISIONADO)
+ * Arduino UNO / ATmega328P 16 MHz / serial 9600 baud
+ *
+ * Base de compatibilidade: firmware V10.1 + Python V10.1B V2.
+ * V4/V10: historico de EEPROM; V10.1: tara, P1, CNN, P2, PF, NTC.
+ *
+ * O QUE ESTA IMPLEMENTADO:
+ * - tara manual por ciclo, HX711 com estabilidade e timeout;
+ * - servo 0=webcam / 90=centro / 180=posicao de secagem;
+ * - 14000 passos de subida e descida, com STOP consultado entre pulsos;
+ * - protocolo serial da V10.1B (CAM:SUCESSO / CAM:RUIM / CAM:INCONCLUSIVA);
+ * - P2 ANTES do monitoramento, PF, NTC A2, 120 segundos de serie;
+ * - EEPROM com journal circular e CRC16, posicao comandada, angulo comandado,
+ *   estado do processo e deteccao conservadora de interrupcao de energia;
+ * - recuperacao SOMENTE com realinhamento e confirmacao do operador.
+ *
+ * LIMITACOES IMPORTANTES:
+ * - EEPROM armazena posicoes COMANDADAS, nao as confirma mecanicamente.
+ * - SEM homing/fim de curso, SEM sensor de temperatura na camara,
+ *   SEM parada de emergencia certificada: nao e codigo de producao autonomo.
+ * - AQUECEDOR SEMPRE DESABILITADO. Rele IN1 D7 permanece HIGH/OFF.
+ * - Para movimento real e necessario habilitar a compilacao E enviar
+ *   ARMAR:REAL explicitamente a cada ciclo (Python V10.1C fornecido).
+ * - NUNCA ligar cargas de aquecimento com esta versao.
+ * - Relay LOW=ON; durante boot a biblioteca nao elimina pulsos de rele.
+ */
+#include <Arduino.h>
+#include <EEPROM.h>
+#include <HX711.h>
+#include <Servo.h>
+#include <math.h>
+#include <stdint.h>
+#include <string.h>
+
+// ===================== CONFIGURACAO =====================
+// PADRAO SEGURO: fluxo completo com MOVIMENTOS SIMULADOS.
+// Mudar para true apenas para ensaio mecanico supervisionado, com aquecedor
+// fisicamente desconectado, percursos livres e parada mecanica acessivel.
+const bool PERMITIR_MOVIMENTO_REAL_NESTA_COMPILACAO = false;
+// Se driver for alimentado pelo rele IN2 D6, usar true SOMENTE apos conferir
+// retencao mecanica do eixo vertical ao desligar energia.
+const bool DRIVER_CONTROLADO_PELO_RELE_D6 = true;
+const unsigned long TEMPO_MONITOR_MS = 120000UL;
+const unsigned long INTERVALO_PESAGEM_MS = 30000UL;
+const unsigned long TEMPO_ESTABILIZACAO_MS = 8000UL;
+const unsigned long TIMEOUT_CNN_MS = 120000UL;
+const long CURSO_VERTICAL_PASSOS = 14000L;
+const float FATOR_HX711_CONTAGENS_POR_G = 1058.3167f; // nao certificado
+const float PESO_MINIMO_G = 1.0f;
+const float AMPLITUDE_MAXIMA_G = 0.20f; // criterio experimental
+const byte PASSOS_PARA_CHECKPOINT = 100;
+const byte GRAUS_PARA_CHECKPOINT = 5;
+
+// ========================= PINOS ========================
+const byte PIN_HX_DT = A1, PIN_HX_SCK = A0, PIN_NTC = A2;
+const byte PIN_DIR = 2, PIN_STEP = 3, PIN_SERVO = 9;
+const byte RELE_AQUECEDOR = 7, RELE_DRIVER = 6;
+const byte RELE_3 = 8, RELE_4 = 4;
+const byte ANG_CAMERA = 0, ANG_CENTRO = 90, ANG_SECAGEM = 180;
+
+HX711 balanca;
+Servo servoPrato;
+
+enum Estado : uint8_t {
+  ESPERA_TARA, PESA_P1, VAI_CAMERA, AGUARDA_CNN,
+  VOLTA_CENTRO, SUBIDA, VAI_SECAGEM, ESTABILIZA, PESA_P2,
+  MONITORANDO, VOLTA_CENTRO_FINAL, DESCIDA, ENCERRAR_OK,
+  ENCERRAR_RUIM, ENCERRAR_INCONCLUSIVA, ESTADO_FALHA
+};
+Estado estado = ESPERA_TARA;
+
+// ================= EEPROM COM JOURNAL ==================
+// Preserva os primeiros 64 bytes (na V4 e V10 a posicao antiga usava addr 0).
+// Cada entrada guarda uma versao inteira: corte durante uma escrita nao deve
+// substituir um checkpoint anterior com CRC valido.
+const int EEPROM_INICIO = 64;
+const uint16_t EEPROM_MAGIC = 0xC71A;
+const byte EEPROM_VERSAO = 1;
+enum EstadoPersistido : uint8_t { P_LIMPO = 0, P_EXECUTANDO = 1, P_FALHOU = 2 };
+
+struct __attribute__((packed)) Registro {
+  uint16_t magic;
+  uint8_t versao;
+  uint8_t situacao;
+  int32_t posicaoPassos;
+  uint8_t anguloServo;
+  uint8_t etapa;
+  uint32_t sequencia;
+  uint16_t crc;
+};
+static_assert(sizeof(Registro) == 16, "Registro EEPROM deve usar 16 bytes");
+
+long posicaoPassos = 0;
+byte anguloAtual = ANG_CENTRO;
+bool recuperacaoPendente = false;
+bool eepromGravacaoFalhou = false;
+bool armadoParaMover = false;
+bool taraConfirmada = false;
+bool paradaSolicitada = false;
+uint32_t ultimaSequencia = 0;
+int ultimoSlot = -1;
+
+unsigned long inicioEstado = 0;
+unsigned long inicioSerie = 0;
+unsigned long proximaMedicao = 0;
+unsigned long ultimoTempoSerie = 0;
+float p1 = NAN, p2 = NAN, pf = NAN;
+char bufferSerial[48];
+byte indiceSerial = 0;
+
+// Prototipos explicitos para Arduino IDE nao gerar declaracoes fora de ordem.
+void desligarReles();
+void anunciarPronto();
+void processarComando(const char *cmd);
+void lerComandos();
+void falhar(const __FlashStringHelper *motivo);
+bool persistir(byte situacao);
+bool pesar(float &peso);
+float lerNTC();
+bool moverServo(byte destino);
+bool moverVertical(bool subir);
+void trocarEstado(Estado novo);
+void finalizarNovoCiclo();
+
+uint16_t crcRegistro(const Registro &r) {
+  const byte *p = reinterpret_cast<const byte *>(&r);
+  uint16_t crc = 0xFFFF;
+  for (byte i = 0; i < sizeof(Registro) - sizeof(uint16_t); i++) {
+    crc ^= ((uint16_t)p[i] << 8);
+    for (byte bit = 0; bit < 8; bit++)
+      crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021) : (uint16_t)(crc << 1);
+  }
+  return crc;
+}
+
+int quantidadeSlots() {
+  return (EEPROM.length() - EEPROM_INICIO) / (int)sizeof(Registro);
+}
+
+bool lerRegistroValido(int slot, Registro &r) {
+  EEPROM.get(EEPROM_INICIO + slot * (int)sizeof(Registro), r);
+  return r.magic == EEPROM_MAGIC && r.versao == EEPROM_VERSAO &&
+         r.situacao <= P_FALHOU && r.posicaoPassos >= 0 &&
+         r.posicaoPassos <= CURSO_VERTICAL_PASSOS && r.anguloServo <= 180 &&
+         r.crc == crcRegistro(r);
+}
+
+void carregarJournal() {
+  int qtd = quantidadeSlots();
+  bool encontrado = false;
+  Registro maisRecente, candidato;
+  for (int s = 0; s < qtd; s++) {
+    if (!lerRegistroValido(s, candidato)) continue;
+    if (!encontrado || (int32_t)(candidato.sequencia - maisRecente.sequencia) > 0) {
+      maisRecente = candidato;
+      ultimoSlot = s;
+      encontrado = true;
+    }
+  }
+  if (!encontrado) {
+    // Sem journal valido: dados V4 legados nao sao tratados como posicao real.
+    recuperacaoPendente = true;
+    return;
+  }
+  ultimaSequencia = maisRecente.sequencia;
+  posicaoPassos = maisRecente.posicaoPassos;
+  anguloAtual = maisRecente.anguloServo;
+  recuperacaoPendente = maisRecente.situacao != P_LIMPO ||
+                        posicaoPassos != 0 || anguloAtual != ANG_CENTRO;
+  Serial.print(F("EEPROM:POS_COMANDADA:"));
+  Serial.print(posicaoPassos);
+  Serial.print(F(":ANGULO:"));
+  Serial.print(anguloAtual);
+  Serial.print(F(":SEQ:"));
+  Serial.println(ultimaSequencia);
+}
+
+bool persistir(byte situacao) {
+  if (!PERMITIR_MOVIMENTO_REAL_NESTA_COMPILACAO) return true;
+  if (eepromGravacaoFalhou) return false;
+  int qtd = quantidadeSlots();
+  if (qtd < 2) { eepromGravacaoFalhou = true; return false; }
+  Registro r;
+  r.magic = EEPROM_MAGIC;
+  r.versao = EEPROM_VERSAO;
+  r.situacao = situacao;
+  r.posicaoPassos = posicaoPassos;
+  r.anguloServo = anguloAtual;
+  r.etapa = (uint8_t)estado;
+  r.sequencia = ultimaSequencia + 1;
+  r.crc = crcRegistro(r);
+  int slot = (ultimoSlot + 1) % qtd;
+  int addr = EEPROM_INICIO + slot * (int)sizeof(Registro);
+  const byte *p = reinterpret_cast<const byte *>(&r);
+
+  // Invalidar a assinatura ANTES de atualizar o restante da entrada.
+  EEPROM.update(addr, 0);
+  EEPROM.update(addr + 1, 0);
+  for (byte i = 2; i < sizeof(Registro); i++) EEPROM.update(addr + i, p[i]);
+  // Assinatura e escrita por ultimo; so a ultima escrita torna o slot valido.
+  EEPROM.update(addr, p[0]);
+  EEPROM.update(addr + 1, p[1]);
+  Registro teste;
+  if (!lerRegistroValido(slot, teste) || teste.sequencia != r.sequencia) {
+    eepromGravacaoFalhou = true;
+    return false;
+  }
+  ultimoSlot = slot;
+  ultimaSequencia = r.sequencia;
+  return true;
+}
+
+// ================== ENTRADAS / SEGURANCA =================
+void desligarReles() {
+  digitalWrite(RELE_AQUECEDOR, HIGH); // AQUECEDOR NUNCA ON
+  digitalWrite(RELE_DRIVER, HIGH);
+  digitalWrite(RELE_3, HIGH);
+  digitalWrite(RELE_4, HIGH);
+}
+
+void falhar(const __FlashStringHelper *motivo) {
+  paradaSolicitada = true;
+  estado = ESTADO_FALHA;
+  desligarReles();
+  if (servoPrato.attached()) servoPrato.detach();
+  // Salvamento best-effort. Se a EEPROM falhar, NAO tentar movimento.
+  if (PERMITIR_MOVIMENTO_REAL_NESTA_COMPILACAO) persistir(P_FALHOU);
+  Serial.print(F("ERRO:"));
+  Serial.println(motivo);
+}
+
+void trocarEstado(Estado novo) {
+  estado = novo;
+  inicioEstado = millis();
+  if (PERMITIR_MOVIMENTO_REAL_NESTA_COMPILACAO &&
+      !persistir(P_EXECUTANDO)) falhar(F("EEPROM_FALHA"));
+}
+
+bool esperarComStop(unsigned long ms) {
+  unsigned long inicio = millis();
+  while (millis() - inicio < ms) {
+    lerComandos();
+    if (paradaSolicitada) return false;
+    delay(5);
+  }
+  return true;
+}
+
+void anunciarPronto() {
+  if (recuperacaoPendente && PERMITIR_MOVIMENTO_REAL_NESTA_COMPILACAO) {
+    Serial.println(F("RECUPERACAO:PENDENTE:REPOSICIONAR_X_E_CONFIRMAR"));
+    return; // NAO enviar READY; Python nao inicia ciclo perigoso.
+  }
+  Serial.println(F("READY:V10.1")); // Identico ao esperado no Python V10.1B
+}
+
+void finalizarNovoCiclo() {
+  desligarReles();
+  taraConfirmada = false;
+  armadoParaMover = false;
+  estado = ESPERA_TARA;
+  if (PERMITIR_MOVIMENTO_REAL_NESTA_COMPILACAO) {
+    // Estado limpo SOMENTE quando centro=90 e base=0 foram comandados.
+    if (posicaoPassos != 0 || anguloAtual != ANG_CENTRO) {
+      falhar(F("POSICAO_FINAL_INCONSISTENTE"));
+      return;
+    }
+    if (!persistir(P_LIMPO)) { falhar(F("EEPROM_FALHA")); return; }
+  }
+  anunciarPronto();
+}
+
+void processarComando(const char *cmd) {
+  if (strcmp(cmd, "ESTADO?") == 0) {
+    Serial.print(F("STATUS:ETAPA:")); Serial.print((int)estado);
+    Serial.print(F(":PASSOS:")); Serial.print(posicaoPassos);
+    Serial.print(F(":ANG:")); Serial.print(anguloAtual);
+    Serial.print(F(":ARMADO:")); Serial.println(armadoParaMover ? 1 : 0);
+    return;
+  }
+  if (strcmp(cmd, "STOP") == 0) {
+    falhar(F("STOP_OPERADOR"));
+    return;
+  }
+  // So pode ser usado com equipamento PARADO, aquecedor desconectado,
+  // amostra removida, prato verificado fisicamente em X inferior + centro.
+  // Nao movimenta servo ou stepper: configura a origem LOGICA confirmada.
+  if (strcmp(cmd, "RECUPERAR:X") == 0) {
+    if (!PERMITIR_MOVIMENTO_REAL_NESTA_COMPILACAO) {
+      Serial.println(F("ERRO:RECUPERACAO_NAO_NECESSARIA_EM_SIMULACAO"));
+      return;
+    }
+    if (estado != ESPERA_TARA || armadoParaMover) {
+      Serial.println(F("ERRO:RECUPERACAO_FORA_DO_ESTADO_SEGURO"));
+      return;
+    }
+    // Manual, nao aceitar comando sem preparacao fisica realizada.
+    posicaoPassos = 0;
+    anguloAtual = ANG_CENTRO;
+    recuperacaoPendente = false;
+    if (!persistir(P_LIMPO)) { falhar(F("EEPROM_FALHA")); return; }
+    Serial.println(F("RECUPERACAO:LOGICA_X_GRAVADA:VERIFICACAO_MANUAL"));
+    anunciarPronto();
+    return;
+  }
+  if (strcmp(cmd, "ARMAR:REAL") == 0) {
+    if (!PERMITIR_MOVIMENTO_REAL_NESTA_COMPILACAO) {
+      Serial.println(F("ERRO:MOVIMENTO_REAL_NAO_COMPILADO")); return;
+    }
+    if (recuperacaoPendente || paradaSolicitada || estado != ESPERA_TARA) {
+      Serial.println(F("ERRO:MOVIMENTO_NAO_PODE_SER_ARMADO")); return;
+    }
+    // Exige confirmacao presencial pelo programa Python; sem autoarmar no boot.
+    armadoParaMover = true;
+    Serial.println(F("ARMADO:REAL"));
+    return;
+  }
+  if (recuperacaoPendente && PERMITIR_MOVIMENTO_REAL_NESTA_COMPILACAO) {
+    Serial.println(F("ERRO:RECUPERACAO_PENDENTE")); return;
+  }
+  if (paradaSolicitada) return;
+  if (estado == ESPERA_TARA && strcmp(cmd, "TARA") == 0) {
+    if (PERMITIR_MOVIMENTO_REAL_NESTA_COMPILACAO && !armadoParaMover) {
+      Serial.println(F("ERRO:REAL_NAO_ARMADO")); return;
+    }
+    int64_t soma = 0;
+    for (byte i = 0; i < 20; i++) {
+      if (!balanca.wait_ready_timeout(2500)) {
+        Serial.println(F("TARA:ERRO")); return;
+      }
+      soma += balanca.read();
+      lerComandos();
+      if (paradaSolicitada) return;
+    }
+    balanca.set_offset((long)(soma / 20));
+    taraConfirmada = true;
+    Serial.println(F("TARA:OK"));
+    return;
+  }
+  if (estado == ESPERA_TARA && strcmp(cmd, "START") == 0) {
+    if (!taraConfirmada) { Serial.println(F("ERRO:TARA_NAO_REALIZADA")); return; }
+    if (PERMITIR_MOVIMENTO_REAL_NESTA_COMPILACAO && !armadoParaMover) {
+      Serial.println(F("ERRO:REAL_NAO_ARMADO")); return;
+    }
+    taraConfirmada = false;
+    p1 = p2 = pf = NAN;
+    trocarEstado(PESA_P1);
+    return;
+  }
+  if (estado == AGUARDA_CNN) {
+    if (!strcmp(cmd, "CAM:SUCESSO") || !strcmp(cmd, "CAM:OK")) {
+      trocarEstado(VOLTA_CENTRO); return;
+    }
+    if (!strcmp(cmd, "CAM:RUIM")) { trocarEstado(ENCERRAR_RUIM); return; }
+    if (!strcmp(cmd, "CAM:INCONCLUSIVA")) { trocarEstado(ENCERRAR_INCONCLUSIVA); return; }
+    if (!strcmp(cmd, "CAM:ERRO")) { falhar(F("FALHA_CAMERA_CNN")); return; }
+  }
+}
+
+void lerComandos() {
+  while (Serial.available() > 0) {
+    char c = (char)Serial.read();
+    if (c == '\r') continue;
+    if (c == '\n') {
+      bufferSerial[indiceSerial] = '\0';
+      if (indiceSerial > 0) processarComando(bufferSerial);
+      indiceSerial = 0;
+      if (paradaSolicitada) return;
+    } else if (indiceSerial < sizeof(bufferSerial) - 1) {
+      bufferSerial[indiceSerial++] = c;
+    } else {
+      indiceSerial = 0; // comando extenso e descartado
+    }
+  }
+}
+
+// ================= PESAGEM E TEMPERATURA =================
+bool pesar(float &resultado) {
+  const byte N = 12;
+  for (byte tentativa = 0; tentativa < 3; tentativa++) {
+    float soma = 0, minimo = 0, maximo = 0;
+    for (byte i = 0; i < N; i++) {
+      if (!balanca.wait_ready_timeout(2500)) return false;
+      float peso = balanca.get_units(1);
+      if (isnan(peso) || isinf(peso)) return false;
+      if (i == 0 || peso < minimo) minimo = peso;
+      if (i == 0 || peso > maximo) maximo = peso;
+      soma += peso;
+      lerComandos();
+      if (paradaSolicitada) return false;
+      delay(50);
+    }
+    if (maximo - minimo <= AMPLITUDE_MAXIMA_G) {
+      resultado = soma / N;
+      return true;
+    }
+    Serial.print(F("PESO:INSTAVEL:"));
+    Serial.println(maximo - minimo, 4);
+  }
+  return false;
+}
+
+float lerNTC() {
+  // Resistor de 10k ao 5V, NTC ao GND. A2 mede temperatura LOCAL da celula.
+  long soma = 0;
+  for (byte i = 0; i < 16; i++) soma += analogRead(PIN_NTC);
+  float adc = soma / 16.0f;
+  if (adc <= 0.5f || adc >= 1022.5f) return NAN;
+  float resistencia = 10000.0f * adc / (1023.0f - adc);
+  float kelvin = 1.0f / (1.0f / 298.15f + log(resistencia / 10000.0f) / 3950.0f);
+  return kelvin - 273.15f;
+}
+
+void emitirPeso(const __FlashStringHelper *nome, float peso) {
+  Serial.print(nome); Serial.print(':'); Serial.println(peso, 4);
+}
+
+void emitirMedicao(unsigned long segundos, float peso) {
+  Serial.print(F("MEDICAO:")); Serial.print(segundos);
+  Serial.print(':'); Serial.print(peso, 4);
+  Serial.print(':');
+  float t = lerNTC();
+  if (isnan(t)) Serial.println(F("ERRO"));
+  else Serial.println(t, 2);
+}
+
+// ===================== MOVIMENTOS ======================
+bool moverServo(byte destino) {
+  if (!PERMITIR_MOVIMENTO_REAL_NESTA_COMPILACAO) {
+    anguloAtual = destino;
+    Serial.print(F("MOVIMENTO:SIMULADO:SERVO:")); Serial.println(destino);
+    return true;
+  }
+  if (!armadoParaMover || recuperacaoPendente) { falhar(F("SERVO_NAO_AUTORIZADO")); return false; }
+  Serial.println(F("MOVIMENTO:REAL:SERVO"));
+  if (!servoPrato.attached()) {
+    servoPrato.attach(PIN_SERVO);
+    servoPrato.write(anguloAtual); // ultima posicao comandada; confirmada visualmente
+    if (!esperarComStop(300)) return false;
+  }
+  while (anguloAtual != destino) {
+    anguloAtual += (destino > anguloAtual) ? 1 : -1;
+    servoPrato.write(anguloAtual);
+    if ((anguloAtual % GRAUS_PARA_CHECKPOINT) == 0 || anguloAtual == destino) {
+      if (!persistir(P_EXECUTANDO)) { falhar(F("EEPROM_FALHA")); return false; }
+    }
+    if (!esperarComStop(12)) return false;
+  }
+  return esperarComStop(500);
+}
+
+bool moverVertical(bool subir) {
+  if (!PERMITIR_MOVIMENTO_REAL_NESTA_COMPILACAO) {
+    Serial.println(subir ? F("MOVIMENTO:SIMULADO:SUBIDA") : F("MOVIMENTO:SIMULADO:DESCIDA"));
+    return true;
+  }
+  if (!armadoParaMover || recuperacaoPendente) { falhar(F("MOTOR_NAO_AUTORIZADO")); return false; }
+  long destino = subir ? CURSO_VERTICAL_PASSOS : 0;
+  if ((subir && posicaoPassos != 0) || (!subir && posicaoPassos != CURSO_VERTICAL_PASSOS)) {
+    falhar(F("POSICAO_LOGICA_MOTOR_INVALIDA")); return false;
+  }
+  Serial.println(F("MOVIMENTO:REAL:MOTOR"));
+  if (!persistir(P_EXECUTANDO)) { falhar(F("EEPROM_FALHA")); return false; }
+  if (DRIVER_CONTROLADO_PELO_RELE_D6) digitalWrite(RELE_DRIVER, LOW);
+  if (!esperarComStop(400)) return false;
+  digitalWrite(PIN_DIR, subir ? HIGH : LOW);
+  long contadorDesdeCheckpoint = 0;
+  while (posicaoPassos != destino) {
+    digitalWrite(PIN_STEP, HIGH);
+    delayMicroseconds(300);
+    digitalWrite(PIN_STEP, LOW);
+    delayMicroseconds(300);
+    posicaoPassos += subir ? 1 : -1;
+    contadorDesdeCheckpoint++;
+    if ((contadorDesdeCheckpoint % PASSOS_PARA_CHECKPOINT) == 0 || posicaoPassos == destino) {
+      if (!persistir(P_EXECUTANDO)) { falhar(F("EEPROM_FALHA")); return false; }
+    }
+    if ((contadorDesdeCheckpoint % 20) == 0) {
+      lerComandos();
+      if (paradaSolicitada) return false;
+    }
+  }
+  Serial.print(F("POS_ATUADOR:")); Serial.println(posicaoPassos);
+  // Manter driver alimentado no topo se houver necessidade de sustentacao.
+  // Somente liberar rele de driver na base, apos o retorno concluido.
+  if (!subir && DRIVER_CONTROLADO_PELO_RELE_D6) digitalWrite(RELE_DRIVER, HIGH);
+  return true;
+}
+
+// ======================= ARDUINO ========================
+void setup() {
+  // HIGH antes de OUTPUT reduz risco no setup, mas nao impede pulsos no boot.
+  digitalWrite(RELE_AQUECEDOR, HIGH);
+  digitalWrite(RELE_DRIVER, HIGH);
+  digitalWrite(RELE_3, HIGH);
+  digitalWrite(RELE_4, HIGH);
+  pinMode(RELE_AQUECEDOR, OUTPUT);
+  pinMode(RELE_DRIVER, OUTPUT);
+  pinMode(RELE_3, OUTPUT);
+  pinMode(RELE_4, OUTPUT);
+  desligarReles();
+  digitalWrite(PIN_STEP, LOW);
+  pinMode(PIN_STEP, OUTPUT);
+  pinMode(PIN_DIR, OUTPUT);
+  Serial.begin(9600);
+  balanca.begin(PIN_HX_DT, PIN_HX_SCK);
+  balanca.set_scale(FATOR_HX711_CONTAGENS_POR_G);
+  // SEM tara, movimento, servo.attach ou acionamento de rele no boot.
+  Serial.println(F("V10.1C:EEPROM_SUPERVISIONADA_SEM_AQUECIMENTO"));
+  Serial.println(PERMITIR_MOVIMENTO_REAL_NESTA_COMPILACAO ?
+                 F("MOVIMENTOS:REAIS_EXIGEM_ARMAR") : F("MOVIMENTOS:SIMULADOS_POR_PADRAO"));
+  Serial.println(F("AQUECEDOR:BLOQUEADO_V10_1"));
+  Serial.println(F("AVISO:SEM_HOMING_NEM_PROTECAO_TERMICA"));
+  if (PERMITIR_MOVIMENTO_REAL_NESTA_COMPILACAO) carregarJournal();
+  anunciarPronto();
+}
+
+void loop() {
+  lerComandos();
+  if (paradaSolicitada || recuperacaoPendente) return;
+  switch (estado) {
+    case ESPERA_TARA: break;
+    case PESA_P1:
+      if (!pesar(p1) || p1 < PESO_MINIMO_G) { falhar(F("P1_INVALIDO_OU_INSTAVEL")); return; }
+      emitirPeso(F("P1"), p1);
+      trocarEstado(VAI_CAMERA);
+      break;
+    case VAI_CAMERA:
+      if (!moverServo(ANG_CAMERA)) return;
+      trocarEstado(AGUARDA_CNN);
+      if (!paradaSolicitada) Serial.println(F("CMD:ACTIVATE_CAMERA"));
+      break;
+    case AGUARDA_CNN:
+      if (millis() - inicioEstado > TIMEOUT_CNN_MS) falhar(F("CNN_TIMEOUT"));
+      break;
+    case ENCERRAR_RUIM:
+      if (!moverServo(ANG_CENTRO)) return;
+      Serial.println(F("FIM:REPROVADA_CNN"));
+      finalizarNovoCiclo();
+      break;
+    case ENCERRAR_INCONCLUSIVA:
+      if (!moverServo(ANG_CENTRO)) return;
+      Serial.println(F("FIM:INCONCLUSIVA_CNN"));
+      finalizarNovoCiclo();
+      break;
+    case VOLTA_CENTRO:
+      if (!moverServo(ANG_CENTRO)) return;
+      trocarEstado(SUBIDA);
+      break;
+    case SUBIDA:
+      if (!moverVertical(true)) return;
+      trocarEstado(VAI_SECAGEM);
+      break;
+    case VAI_SECAGEM:
+      if (!moverServo(ANG_SECAGEM)) return;
+      trocarEstado(ESTABILIZA);
+      break;
+    case ESTABILIZA:
+      if (millis() - inicioEstado >= TEMPO_ESTABILIZACAO_MS) trocarEstado(PESA_P2);
+      break;
+    case PESA_P2:
+      if (!pesar(p2) || p2 < PESO_MINIMO_G) { falhar(F("P2_INVALIDO_OU_INSTAVEL")); return; }
+      emitirPeso(F("P2"), p2);
+      Serial.println(F("AQUECEDOR:BLOQUEADO_V10_1"));
+      inicioSerie = millis();
+      proximaMedicao = inicioSerie + INTERVALO_PESAGEM_MS;
+      ultimoTempoSerie = 0;
+      emitirMedicao(0, p2);
+      trocarEstado(MONITORANDO);
+      break;
+    case MONITORANDO:
+      if ((long)(millis() - proximaMedicao) >= 0) {
+        float leitura;
+        if (!pesar(leitura)) { falhar(F("PESO_MONITOR_INSTAVEL")); return; }
+        unsigned long seg = (millis() - inicioSerie) / 1000UL;
+        if (seg <= ultimoTempoSerie) seg = ultimoTempoSerie + 1;
+        ultimoTempoSerie = seg;
+        emitirMedicao(seg, leitura);
+        pf = leitura;
+        proximaMedicao += INTERVALO_PESAGEM_MS;
+      }
+      if (millis() - inicioSerie >= TEMPO_MONITOR_MS && !isnan(pf)) {
+        emitirPeso(F("PF"), pf);
+        trocarEstado(VOLTA_CENTRO_FINAL);
+      }
+      break;
+    case VOLTA_CENTRO_FINAL:
+      if (!moverServo(ANG_CENTRO)) return;
+      trocarEstado(DESCIDA);
+      break;
+    case DESCIDA:
+      if (!moverVertical(false)) return;
+      trocarEstado(ENCERRAR_OK);
+      break;
+    case ENCERRAR_OK:
+      desligarReles();
+      Serial.println(F("FIM:1"));
+      finalizarNovoCiclo();
+      break;
+    case ESTADO_FALHA: break;
+  }
+}

@@ -1,0 +1,6 @@
+pyserial
+python-dotenv
+opencv-python
+numpy
+roboflow
+Pillow>=10

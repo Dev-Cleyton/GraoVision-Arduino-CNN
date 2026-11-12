@@ -1,0 +1,5 @@
+pyserial
+python-dotenv
+opencv-python
+numpy
+roboflow

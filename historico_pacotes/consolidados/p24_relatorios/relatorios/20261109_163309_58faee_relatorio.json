@@ -1,0 +1,270 @@
+{
+  "id": "20261109_163309_58faee",
+  "inicio": "2026-11-09T16:33:09",
+  "fim": "2026-11-09T16:41:40",
+  "status": "ERRO_PROCESSO",
+  "motivo": "Falha do Arduino: ERRO:PESO_MONITOR_INSTAVEL",
+  "status_cnn": "APROVADA",
+  "roi_modo": "AUTOMATICA_BANDEJA_V2",
+  "roi_status": "OK",
+  "roi_registros": [
+    {
+      "status": "OK",
+      "modo": "AUTOMATICA_BANDEJA_V2",
+      "imagem": "imagens\\20261109_163309_58faee\\imagem_1.jpg",
+      "roi": {
+        "cx": 1235,
+        "cy": 746,
+        "raio": 505,
+        "raio_bandeja": 624,
+        "cobertura": 1.0,
+        "suporte_borda": 0.7708,
+        "modo": "HOUGH_CIRCULO_INTERNO_V2"
+      },
+      "inferencia_na_imagem_original": true,
+      "imagem_roi": "imagens\\20261109_163309_58faee\\imagem_1_roi_visualizada.jpg",
+      "fallback_fixo_usado": false,
+      "comparacao_roi_fixa": {
+        "centro_x": 1254,
+        "centro_y": 720,
+        "raio": 503,
+        "deteccoes_aceitas": 85,
+        "deteccoes_bad": 0,
+        "percentual_bad": 0.0
+      },
+      "deteccoes_brutas": 113,
+      "deteccoes_aceitas": 85,
+      "deteccoes_fora": 28,
+      "deteccoes_bad": 0,
+      "percentual_bad": 0.0,
+      "classes_brutas": {
+        "good": 96,
+        "bad": 17
+      },
+      "imagem_anotada": "imagens\\20261109_163309_58faee\\imagem_1_detectada.jpg",
+      "arquivo_deteccoes": "imagens\\20261109_163309_58faee\\imagem_1_deteccoes.csv"
+    }
+  ],
+  "motivo_cnn": "0 de 85 deteccoes bad (0.00%), dentro do limite visual de 25%",
+  "total_deteccoes_validas": 85,
+  "deteccoes_bad": 0,
+  "percentual_bad": 0.0,
+  "classes_detectadas_na_roi": {
+    "good": 85
+  },
+  "imagens": [
+    "imagens\\20261109_163309_58faee\\imagem_1.jpg"
+  ],
+  "P1_g": 16.6949,
+  "P2_g": 16.7721,
+  "PF_g": null,
+  "delta_posicionamento_P2_menos_P1_g": null,
+  "diferenca_inicial_P1_menos_P2_g": null,
+  "PF_corrigido_referencia_P1_g": null,
+  "perda_massa_percentual_referencia_P1": null,
+  "tendencia_leitura_massa": null,
+  "balanco_massa_detalhado": null,
+  "perda_massa_g": null,
+  "perda_massa_percentual": null,
+  "temperatura_ntc_local_C": 25.82,
+  "umidade_graos_final_percentual": null,
+  "umidade_limite_empresa_percentual": null,
+  "metodo_umidade": null,
+  "aquecimento_realizado": false,
+  "movimento_simulado": false,
+  "historico": [
+    {
+      "tempo_s": 0,
+      "peso_g": 16.7721,
+      "temp_ntc_c": 25.07
+    },
+    {
+      "tempo_s": 32,
+      "peso_g": 16.6939,
+      "temp_ntc_c": 24.91
+    },
+    {
+      "tempo_s": 60,
+      "peso_g": 16.7436,
+      "temp_ntc_c": 25.82
+    }
+  ],
+  "movimentos_motor": [
+    {
+      "sentido": "SUBIDA",
+      "passos_executados": 0,
+      "passos_totais": 14000,
+      "posicao_comandada": 0
+    },
+    {
+      "sentido": "SUBIDA",
+      "passos_executados": 500,
+      "passos_totais": 14000,
+      "posicao_comandada": 500
+    },
+    {
+      "sentido": "SUBIDA",
+      "passos_executados": 1000,
+      "passos_totais": 14000,
+      "posicao_comandada": 1000
+    },
+    {
+      "sentido": "SUBIDA",
+      "passos_executados": 1500,
+      "passos_totais": 14000,
+      "posicao_comandada": 1500
+    },
+    {
+      "sentido": "SUBIDA",
+      "passos_executados": 2000,
+      "passos_totais": 14000,
+      "posicao_comandada": 2000
+    },
+    {
+      "sentido": "SUBIDA",
+      "passos_executados": 2500,
+      "passos_totais": 14000,
+      "posicao_comandada": 2500
+    },
+    {
+      "sentido": "SUBIDA",
+      "passos_executados": 3000,
+      "passos_totais": 14000,
+      "posicao_comandada": 3000
+    },
+    {
+      "sentido": "SUBIDA",
+      "passos_executados": 3500,
+      "passos_totais": 14000,
+      "posicao_comandada": 3500
+    },
+    {
+      "sentido": "SUBIDA",
+      "passos_executados": 4000,
+      "passos_totais": 14000,
+      "posicao_comandada": 4000
+    },
+    {
+      "sentido": "SUBIDA",
+      "passos_executados": 4500,
+      "passos_totais": 14000,
+      "posicao_comandada": 4500
+    },
+    {
+      "sentido": "SUBIDA",
+      "passos_executados": 5000,
+      "passos_totais": 14000,
+      "posicao_comandada": 5000
+    },
+    {
+      "sentido": "SUBIDA",
+      "passos_executados": 5500,
+      "passos_totais": 14000,
+      "posicao_comandada": 5500
+    },
+    {
+      "sentido": "SUBIDA",
+      "passos_executados": 6000,
+      "passos_totais": 14000,
+      "posicao_comandada": 6000
+    },
+    {
+      "sentido": "SUBIDA",
+      "passos_executados": 6500,
+      "passos_totais": 14000,
+      "posicao_comandada": 6500
+    },
+    {
+      "sentido": "SUBIDA",
+      "passos_executados": 7000,
+      "passos_totais": 14000,
+      "posicao_comandada": 7000
+    },
+    {
+      "sentido": "SUBIDA",
+      "passos_executados": 7500,
+      "passos_totais": 14000,
+      "posicao_comandada": 7500
+    },
+    {
+      "sentido": "SUBIDA",
+      "passos_executados": 8000,
+      "passos_totais": 14000,
+      "posicao_comandada": 8000
+    },
+    {
+      "sentido": "SUBIDA",
+      "passos_executados": 8500,
+      "passos_totais": 14000,
+      "posicao_comandada": 8500
+    },
+    {
+      "sentido": "SUBIDA",
+      "passos_executados": 9000,
+      "passos_totais": 14000,
+      "posicao_comandada": 9000
+    },
+    {
+      "sentido": "SUBIDA",
+      "passos_executados": 9500,
+      "passos_totais": 14000,
+      "posicao_comandada": 9500
+    },
+    {
+      "sentido": "SUBIDA",
+      "passos_executados": 10000,
+      "passos_totais": 14000,
+      "posicao_comandada": 10000
+    },
+    {
+      "sentido": "SUBIDA",
+      "passos_executados": 10500,
+      "passos_totais": 14000,
+      "posicao_comandada": 10500
+    },
+    {
+      "sentido": "SUBIDA",
+      "passos_executados": 11000,
+      "passos_totais": 14000,
+      "posicao_comandada": 11000
+    },
+    {
+      "sentido": "SUBIDA",
+      "passos_executados": 11500,
+      "passos_totais": 14000,
+      "posicao_comandada": 11500
+    },
+    {
+      "sentido": "SUBIDA",
+      "passos_executados": 12000,
+      "passos_totais": 14000,
+      "posicao_comandada": 12000
+    },
+    {
+      "sentido": "SUBIDA",
+      "passos_executados": 12500,
+      "passos_totais": 14000,
+      "posicao_comandada": 12500
+    },
+    {
+      "sentido": "SUBIDA",
+      "passos_executados": 13000,
+      "passos_totais": 14000,
+      "posicao_comandada": 13000
+    },
+    {
+      "sentido": "SUBIDA",
+      "passos_executados": 13500,
+      "passos_totais": 14000,
+      "posicao_comandada": 13500
+    },
+    {
+      "sentido": "SUBIDA",
+      "passos_executados": 14000,
+      "passos_totais": 14000,
+      "posicao_comandada": 14000
+    }
+  ],
+  "erro": "Falha do Arduino: ERRO:PESO_MONITOR_INSTAVEL",
+  "observacoes": "Perda de massa nao equivale ao teor de umidade dos graos. NTC mede temperatura proxima da celula. V10.2: aquecedor bloqueado; nenhum sinal NTC mede temperatura da camara. Diferenca P1-P2 so compensa offset ADITIVO CONSTANTE e nao corrige deriva termica, tempo, forca nos cabos, evaporacao nao-aquosa ou ruido. ROI automatica e CNN exigem validacao metrologica."
+}

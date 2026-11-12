@@ -1,0 +1,7 @@
+pyserial
+python-dotenv
+opencv-python
+numpy
+roboflow
+Pillow>=10
+reportlab>=4.0
