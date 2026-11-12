@@ -1,0 +1,24 @@
+# Arduino
+
+SERIAL_PORT = "COM4"
+BAUDRATE = 9600
+
+
+# Camera
+
+CAMERA_INDEX = 0
+IMAGE_WIDTH = 2560
+IMAGE_HEIGHT = 1440
+
+
+# IA
+
+CONFIDENCE = 28
+OVERLAP = 24
+MODEL_VERSION = 54
+PROJECT_NAME = "kernel-corn"
+
+
+# Critério de aprovação
+
+MAX_BAD_PERCENTAGE = 0.25
