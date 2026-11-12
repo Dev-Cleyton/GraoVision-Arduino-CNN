@@ -1,0 +1,34 @@
+{
+  "id": "20261107_185908_39e352",
+  "inicio": "2026-11-07T18:59:08",
+  "fim": "2026-11-07T19:00:53",
+  "status": "REPROVADA_CNN",
+  "motivo": "1 de 2 deteccoes (50.00%) classificadas como bad; limite 25%",
+  "status_cnn": "REPROVADA",
+  "motivo_cnn": "1 de 2 deteccoes (50.00%) classificadas como bad; limite 25%",
+  "total_deteccoes_validas": 2,
+  "deteccoes_bad": 1,
+  "percentual_bad": 50.0,
+  "classes_detectadas_na_roi": {
+    "good": 1,
+    "bad": 1
+  },
+  "imagens": [
+    "imagens\\20261107_185908_39e352\\imagem_1.jpg"
+  ],
+  "P1_g": 4.8183,
+  "P2_g": null,
+  "PF_g": null,
+  "delta_posicionamento_P2_menos_P1_g": null,
+  "perda_massa_g": null,
+  "perda_massa_percentual": null,
+  "temperatura_ntc_local_C": null,
+  "umidade_graos_final_percentual": null,
+  "umidade_limite_empresa_percentual": null,
+  "metodo_umidade": null,
+  "aquecimento_realizado": false,
+  "movimento_simulado": true,
+  "historico": [],
+  "erro": null,
+  "observacoes": "Perda de massa nao equivale ao teor de umidade dos graos. NTC mede temperatura proxima da celula. V10.1 validacao: aquecedor bloqueado."
+}

@@ -1,0 +1,60 @@
+{
+  "id": "20261107_184754_3c0389",
+  "inicio": "2026-11-07T18:47:54",
+  "fim": "2026-11-07T18:50:59",
+  "status": "PENDENTE_VALIDACAO_UMIDADE",
+  "motivo": "CNN aprovada; periodo de monitoramento sem aquecimento real. Umidade dos graos nao determinada por metodo validado.",
+  "status_cnn": "APROVADA",
+  "motivo_cnn": "2 de 82 deteccoes bad (2.44%), dentro do limite visual de 25%",
+  "total_deteccoes_validas": 82,
+  "deteccoes_bad": 2,
+  "percentual_bad": 2.4390243902439024,
+  "classes_detectadas_na_roi": {
+    "good": 80,
+    "bad": 2
+  },
+  "imagens": [
+    "imagens\\20261107_184754_3c0389\\imagem_1.jpg"
+  ],
+  "P1_g": 20.6875,
+  "P2_g": 20.6603,
+  "PF_g": 20.6732,
+  "delta_posicionamento_P2_menos_P1_g": -0.027200000000000557,
+  "perda_massa_g": -0.01290000000000191,
+  "perda_massa_percentual": -0.06243858995272048,
+  "temperatura_ntc_local_C": 32.22,
+  "umidade_graos_final_percentual": null,
+  "umidade_limite_empresa_percentual": null,
+  "metodo_umidade": null,
+  "aquecimento_realizado": false,
+  "movimento_simulado": true,
+  "historico": [
+    {
+      "tempo_s": 0,
+      "peso_g": 20.6603,
+      "temp_ntc_c": 32.25
+    },
+    {
+      "tempo_s": 31,
+      "peso_g": 20.6648,
+      "temp_ntc_c": 32.04
+    },
+    {
+      "tempo_s": 61,
+      "peso_g": 20.6554,
+      "temp_ntc_c": 32.27
+    },
+    {
+      "tempo_s": 90,
+      "peso_g": 20.6636,
+      "temp_ntc_c": 32.26
+    },
+    {
+      "tempo_s": 120,
+      "peso_g": 20.6732,
+      "temp_ntc_c": 32.22
+    }
+  ],
+  "erro": null,
+  "observacoes": "Perda de massa nao equivale ao teor de umidade dos graos. NTC mede temperatura proxima da celula. V10.1 validacao: aquecedor bloqueado."
+}

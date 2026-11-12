@@ -1,0 +1,13 @@
+{
+  "imagem": "/mnt/data/imagem_1(7).jpg",
+  "roi": {
+    "cx": 1004,
+    "cy": 609,
+    "raio": 400,
+    "raio_bandeja": 494,
+    "cobertura": 1.0,
+    "suporte_borda": 0.5125,
+    "modo": "HOUGH_CIRCULO_INTERNO"
+  },
+  "status": "OK"
+}
