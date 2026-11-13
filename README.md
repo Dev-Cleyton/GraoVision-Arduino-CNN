@@ -115,3 +115,25 @@ Projeto acadêmico de **Cleyton Junior dos Santos**, desenvolvido como parte da 
 ---
 
 **Status:** histórico técnico organizado para documentação e avaliação. Funcionalidades e resultados devem ser confirmados nos artefatos e ensaios correspondentes.
+
+<!-- GRAOVISION_EVIDENCIAS_INICIO -->
+## Interface e evidências do protótipo
+
+As capturas históricas a seguir documentam **a interface GrãoVision** e os módulos de acompanhamento e ensaio; não demonstram, isoladamente, calibração, precisão metrológica ou desempenho de classificação.
+
+### Teste instrumental sem aquecimento
+
+![Tela do ensaio instrumental sem aquecimento](docs/imagens/teste_instrumental_sem_aquecimento.png)
+
+### Gráficos da instrumentação NTC e HX711
+
+![Gráficos da interface de monitoramento](docs/imagens/graficos_instrumentacao.png)
+
+### Interface gráfica: três temas
+
+![Seletor de três temas da interface](docs/imagens/selecionar_tema.png)
+
+As fotografias usadas no treinamento da CNN foram produzidas pelo autor do projeto, conforme declaração do autor. A inclusão pública de imagens de treinamento, pesos ou exportações do modelo exige verificação separada dos termos e direitos associados.
+
+Veja [as notas sobre o que as capturas realmente comprovam](docs/EVIDENCIAS_EXPERIMENTAIS.md) e o [checklist de revisão para divulgação pública](docs/PUBLICACAO_CHECKLIST.md). O protótipo possui firmwares históricos que **não devem ser utilizados em hardware de potência sem revisão de segurança**.
+<!-- GRAOVISION_EVIDENCIAS_FIM -->
