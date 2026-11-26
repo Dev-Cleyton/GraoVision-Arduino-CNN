@@ -1,0 +1,20 @@
+﻿campanha;registro;data;protocolo;resultado;nivel_evidencia
+Ensaio 100 pontos HX711;relatorio_100p.txt;29/10/2026;100 pontos 49,5min prato vazio;0,0124 a -0,1405 g;relatório agregado, série individual não incorporada
+Comparação HX711 relés A/B;sínteses das conversas 06/11/2026;06/11/2026;relés desconectados versus conectados sem potência;delta carga -0,0035 / -0,0059 g e resíduos de zero +0,0587 / -0,2404 g;resultados históricos a confirmar nos logs integrais
+HX711 retorno-zero V10 2 ciclos;Texto colado(5).txt;data não confirmada;"24 HX711 por ponto; carga/zero com 1 tara";"base zero -0,0097 g; zero final -0,1050 g";registro histórico primário lido
+HX711 retorno-zero V11 3 ciclos;Texto colado(6).txt;06/11/2026;ciclos B1/C1 B2/C2 B3/C3 com ~36 g;registros detalhados disponíveis no histórico, sem padrao rastreavel;registro histórico primário parcial
+HX711 V12 sem carga;Texto colado(7).txt;06/11/2026;"61 pontos; 30 s; 24 HX711 +16 NTC";"0,01720 a 0,13504 g; delta +0,11784 g; NTC 29,910 a 30,164 C";relatorio final recuperado
+HX711 V13 condição A;Texto colado(10).txt;06/11/2026;"61 pontos; reles desconectados; sem carga";"-0,00567 a +0,33256 g; delta +0,33823 g";"relatorio final recuperado; condicao B NAO verificada"
+V10.1B recuperação webcam;Texto colado(20261108-185954).txt;08/11/2026;desconexão USB intencional e reconexão;erro processual, posteriormente CAM:SUCESSO e CAM:RUIM;evidencia de retorno de comunicacao, não ensaio de acuracia
+V10.1C-R3 decisões CNN;Texto colado(20261109-184404).txt;09/11/2026;ROI automatica, limite experimental 25%;"14/28=50%; 19/71=26,7606%; reprovacoes";resultado de inferencia, nao rotulos humanos
+V10.2.4 quatro ciclos;Texto colado(20261110-055159).txt;10/11/2026;4 sessões 02:13 a 02:46;P1/P2/PF, NTC, ROI, FIM:1;transcritos em HISTORICO_CICLOS_RECUPERADOS
+V10.2.5 ensaio 09:42;Texto colado(20261110-124744).txt;10/11/2026;autorização negada e depois ciclo;P1/P2/PF, ROI, FIM:1;transcrito
+V10.2.5 ciclos 10:49/10:54;Texto colado(20261110-140213).txt;10/11/2026;2 ciclos;P1/P2/PF, ROI, FIM:1;transcrito
+V10.2.5 ciclo sem horario;Síntese histórica da conversa de 10/11/2026;10/11/2026;massa 18 g, 3 vetores;P1=18,1512/P2=18,1667/PF=18,1325;evidencia secundaria, conferir log primario
+V10.2.6 P3;Texto colado(20261110-155540).txt;10/11/2026;12 leituras P1/P2/PF/P3;P1=18,5176/P3=18,5123;transcrito
+V10.2.7 P1-P5;Texto colado(20261110-163208).txt;10/11/2026;"6 vetores; 12 leituras cada";"FIM:1; P4-P2=-0,1040 g";transcrito
+V10.2.7 tarde;Texto colado(20261110-174350).txt;10/11/2026;duas sessões completas;14:29 e 14:36, FIM:1;transcrito
+V10.2.7 térmico e CNN_TIMEOUT;Texto colado(20261110-185249).txt e Texto colado(20261110-193054).txt;10/11/2026;LIMITE_TEMPERATURA_SOFTWARE / TIMEOUT_RESFRIAMENTO;43,34 C e 57,87 C, ciclos não concluídos;diagnosticos de falha
+V10.2.7-R1 sem calor e preliminar calor;Texto colado(20261110-213558).txt;10/11/2026;18:16 sem calor, 18:27 aquecimento;inercia termica e massa aparente +0,3000 g;"registros de comando; temperatura NTC local"
+4 ciclos 11/11;DADOS_BRUTOS_CICLOS_2026_11_11.csv;11/11/2026;P1-P5/ PF 12 leituras cada;4 sequencias FIM:1, P5 invalido numa;CSV original preservado
+Treinamento e métricas API;RESULTADO_COMPLETO_ROBOFLOW_V54_SEM_CHAVE.txt;11/11/2026;"429 originais; 1067 versão 54";"YOLOv8n 957/100/10; 26857 anotações; métricas API";metadados da plataforma, não teste externo da bancada
